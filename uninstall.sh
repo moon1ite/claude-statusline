@@ -25,13 +25,8 @@ else
     echo -e "  ${YELLOW}!${NC} Binary not found (already removed?)"
 fi
 
-# Remove statusline.sh
-if [ -f "$CLAUDE_DIR/statusline.sh" ]; then
-    rm "$CLAUDE_DIR/statusline.sh"
-    echo -e "  ${GREEN}✓${NC} Removed $CLAUDE_DIR/statusline.sh"
-else
-    echo -e "  ${YELLOW}!${NC} statusline.sh not found (already removed?)"
-fi
+# Note: statusline.sh lives in the repo, not copied to ~/.claude/
+# So we only need to remove the binary and settings
 
 # Remove statusLine from settings.json
 if [ -f "$SETTINGS_FILE" ]; then

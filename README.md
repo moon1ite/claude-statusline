@@ -36,7 +36,7 @@ A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) t
 ### Quick Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/claude-statusline.git
+git clone https://github.com/moon1ite/claude-statusline.git
 cd claude-statusline
 ./install.sh
 ```
@@ -48,12 +48,11 @@ cd claude-statusline
    cargo build --release
    ```
 
-2. **Copy files to Claude directory:**
+2. **Copy the binary to Claude directory:**
    ```bash
    mkdir -p ~/.claude/bin
    cp target/release/claude-status ~/.claude/bin/
-   cp statusline.sh ~/.claude/
-   chmod +x ~/.claude/bin/claude-status ~/.claude/statusline.sh
+   chmod +x ~/.claude/bin/claude-status
    ```
 
 3. **Configure Claude Code** by adding to `~/.claude/settings.json`:
@@ -61,11 +60,12 @@ cd claude-statusline
    {
      "statusLine": {
        "type": "command",
-       "command": "~/.claude/statusline.sh",
+       "command": "/path/to/claude-statusline/statusline.sh",
        "padding": 0
      }
    }
    ```
+   Replace `/path/to/claude-statusline` with where you cloned the repo.
 
 4. **Restart Claude Code** to see the statusline.
 
@@ -78,7 +78,6 @@ cd claude-statusline
 Or manually:
 ```bash
 rm ~/.claude/bin/claude-status
-rm ~/.claude/statusline.sh
 # Remove "statusLine" from ~/.claude/settings.json
 ```
 
@@ -113,13 +112,18 @@ This plugin uses [Nerd Font](https://www.nerdfonts.com/) icons. Make sure your t
 ## Architecture
 
 ```
-~/.claude/
-├── statusline.sh          # Bash orchestrator
+claude-statusline/         # (your cloned repo)
+├── statusline.sh          # Bash orchestrator (referenced by settings.json)
 │   ├── Line 1: Context, cost, git, directory, model (via jq)
 │   └── Line 2: Calls claude-status binary
+├── src/main.rs            # Rust source code
+├── install.sh             # Installer script
+└── uninstall.sh           # Uninstaller script
+
+~/.claude/
 ├── bin/
-│   └── claude-status      # Rust binary (transcript parser)
-└── settings.json          # Claude Code configuration
+│   └── claude-status      # Rust binary (installed here)
+└── settings.json          # Points to repo's statusline.sh
 ```
 
 ### How It Works
@@ -164,8 +168,9 @@ The Rust binary implements event sourcing over the Claude Code transcript:
 
 ### Statusline not appearing
 1. Check Claude Code settings: `cat ~/.claude/settings.json | jq .statusLine`
-2. Verify files exist: `ls -la ~/.claude/statusline.sh ~/.claude/bin/claude-status`
-3. Test manually: `echo '{}' | ~/.claude/statusline.sh`
+2. Verify binary exists: `ls -la ~/.claude/bin/claude-status`
+3. Check statusline.sh path in settings.json points to your repo
+4. Test manually: `echo '{}' | /path/to/your/repo/statusline.sh`
 
 ### Tools/agents disappearing
 - This is expected! Activity resets at the start of each turn

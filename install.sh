@@ -73,10 +73,9 @@ cp "$SCRIPT_DIR/target/release/claude-status" "$BIN_DIR/"
 chmod +x "$BIN_DIR/claude-status"
 echo -e "  ${GREEN}✓${NC} Installed binary to $BIN_DIR/claude-status"
 
-# Install statusline.sh
-cp "$SCRIPT_DIR/statusline.sh" "$CLAUDE_DIR/"
-chmod +x "$CLAUDE_DIR/statusline.sh"
-echo -e "  ${GREEN}✓${NC} Installed statusline.sh to $CLAUDE_DIR/"
+# Make statusline.sh executable (referenced from repo, not copied)
+chmod +x "$SCRIPT_DIR/statusline.sh"
+echo -e "  ${GREEN}✓${NC} statusline.sh ready at $SCRIPT_DIR/"
 
 # Configure Claude Code settings
 echo ""
@@ -88,24 +87,24 @@ if [ -f "$SETTINGS_FILE" ]; then
     # Check if statusLine is already configured
     if grep -q '"statusLine"' "$SETTINGS_FILE"; then
         echo -e "  ${YELLOW}!${NC} statusLine already configured in settings.json"
-        echo -e "    Please verify it points to: ${GREEN}~/.claude/statusline.sh${NC}"
+        echo -e "    Please verify it points to: ${GREEN}$SCRIPT_DIR/statusline.sh${NC}"
     else
         # Backup existing settings
         cp "$SETTINGS_FILE" "$SETTINGS_FILE.backup"
         echo -e "  ${GREEN}✓${NC} Backed up settings to $SETTINGS_FILE.backup"
 
         # Add statusLine configuration using jq
-        jq '. + {"statusLine": {"type": "command", "command": "~/.claude/statusline.sh", "padding": 0}}' \
+        jq --arg cmd "$SCRIPT_DIR/statusline.sh" '. + {"statusLine": {"type": "command", "command": $cmd, "padding": 0}}' \
             "$SETTINGS_FILE" > "$SETTINGS_FILE.tmp" && mv "$SETTINGS_FILE.tmp" "$SETTINGS_FILE"
         echo -e "  ${GREEN}✓${NC} Added statusLine configuration to settings.json"
     fi
 else
     # Create new settings file
-    cat > "$SETTINGS_FILE" << 'EOF'
+    cat > "$SETTINGS_FILE" << EOF
 {
   "statusLine": {
     "type": "command",
-    "command": "~/.claude/statusline.sh",
+    "command": "$SCRIPT_DIR/statusline.sh",
     "padding": 0
   }
 }
@@ -123,7 +122,7 @@ else
     echo -e "  ${RED}✗${NC} Binary not executable"
 fi
 
-if [ -x "$CLAUDE_DIR/statusline.sh" ]; then
+if [ -x "$SCRIPT_DIR/statusline.sh" ]; then
     echo -e "  ${GREEN}✓${NC} statusline.sh is executable"
 else
     echo -e "  ${RED}✗${NC} statusline.sh not executable"
