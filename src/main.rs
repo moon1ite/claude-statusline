@@ -216,7 +216,15 @@ fn parse_transcript(path: &Path) -> TranscriptState {
             // Check if this is a skill content message (has sourceToolUseID)
             let is_skill_content = value.get("sourceToolUseID").is_some();
 
-            if !is_tool_result && !is_meta && !is_skill_content {
+            // Check if this is an agent notification (background task completion)
+            let is_agent_notification = value
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .map(|s| s.starts_with("<agent-notification>"))
+                .unwrap_or(false);
+
+            if !is_tool_result && !is_meta && !is_skill_content && !is_agent_notification {
                 pending_reset = true;
             }
         }
@@ -224,7 +232,8 @@ fn parse_transcript(path: &Path) -> TranscriptState {
         // Reset activity when assistant starts responding (new turn)
         if line_type == "assistant" && is_top_level && pending_reset {
             tool_starts.clear();
-            agent_starts.clear();
+            // Keep running agents, only clear completed/errored ones
+            agent_starts.retain(|_, agent| agent.status == Status::Running);
             skill_starts.clear();
             state.tools.completed.clear();
             state.tools.running.clear();
