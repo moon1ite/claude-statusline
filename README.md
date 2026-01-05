@@ -11,17 +11,18 @@ A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) t
 - **Git Status**: Current branch with file counts and line changes
 - **Tool Activity**: Real-time display of running and completed tools
 - **Agent Status**: Track spawned agents (Explore, code-reviewer, etc.) with elapsed time
+- **Skill Tracking**: Show which skill Claude is currently using (brainstorming, TDD, etc.)
 - **Todo Progress**: Current task and completion status (done/total)
 
 ## Preview
 
 ```
 ██████░░░░░░░░░ 42% ($0.0234) | main (3 files +45 -12) | my-project | Claude Opus 4
- ⟳ Fix auth bug (2/5) |  ✓ Explore (3s) |  ✓ Glob ✓ Read ⟳ Edit
+ ⟳ Fix auth bug (2/5) |  ✓ brainstorming |  ✓ Explore (3s) |  ✓ Glob ✓ Read ⟳ Edit
 ```
 
 **Line 1** (Bash): Context bar, cost, git status, directory, model
-**Line 2** (Rust): Todos, agents, tools
+**Line 2** (Rust): Todos, skills, agents, tools
 
 ## Requirements
 
@@ -100,6 +101,7 @@ The plugin uses the [Catppuccin Mocha](https://github.com/catppuccin/catppuccin)
 This plugin uses [Nerd Font](https://www.nerdfonts.com/) icons. Make sure your terminal uses a Nerd Font for proper icon rendering:
 
 - `` - Checkbox (todos)
+- `` - Lightning bolt (skills)
 - `` - Robot (agents)
 - `` - Wrench (tools)
 - `` - Spinner (running)
@@ -146,11 +148,13 @@ The Rust binary implements event sourcing over the Claude Code transcript:
 | `tool_result` | Move to completed, increment count |
 | `Task` tool_use | Create agent entry |
 | `Task` tool_result | Mark agent complete |
+| `Skill` tool_use | Create/update skill entry (deduplicated by name) |
+| `Skill` tool_result | Mark skill complete |
 | `TodoWrite` | Update todo state |
 | `user` message (top-level) | Mark pending reset |
-| `assistant` message (top-level) | Reset state for new turn |
+| `assistant` message (top-level) | Reset tools/agents for new turn |
 
-**Per-turn tracking**: Activity resets when you send a new message and Claude starts responding, so you only see the current turn's activity.
+**Per-turn tracking**: Tools, agents, and skills reset when you send a new message and Claude starts responding, so you only see the current turn's activity.
 
 ## Troubleshooting
 

@@ -27,6 +27,7 @@ const ICON_ERROR: &str = "\u{f00d}";
 const ICON_TODOS: &str = "\u{f14a}"; // checkbox
 const ICON_AGENTS: &str = "\u{ee0d}"; // robot
 const ICON_TOOLS: &str = "\u{f0ad}"; // wrench
+const ICON_SKILLS: &str = "\u{f0e7}"; // lightning bolt (skills)
 
 // ============================================================================
 // Data Structures
@@ -59,6 +60,12 @@ struct AgentEntry {
     end_time: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct SkillEntry {
+    name: String,
+    status: Status,
+}
+
 #[derive(Debug, Default)]
 struct TodoState {
     current: Option<String>,
@@ -70,6 +77,7 @@ struct TodoState {
 struct TranscriptState {
     tools: ToolState,
     agents: Vec<AgentEntry>,
+    skills: Vec<SkillEntry>,
     todos: TodoState,
 }
 
@@ -156,6 +164,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
     let mut state = TranscriptState::default();
     let mut tool_starts: HashMap<String, (String, Option<String>)> = HashMap::new();
     let mut agent_starts: HashMap<String, AgentEntry> = HashMap::new();
+    let mut skill_starts: HashMap<String, SkillEntry> = HashMap::new();
 
     let file = match File::open(path) {
         Ok(f) => f,
@@ -201,7 +210,13 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                 })
                 .unwrap_or(false);
 
-            if !is_tool_result {
+            // Check if this is a meta message (skill content injection, system message, etc.)
+            let is_meta = value.get("isMeta").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            // Check if this is a skill content message (has sourceToolUseID)
+            let is_skill_content = value.get("sourceToolUseID").is_some();
+
+            if !is_tool_result && !is_meta && !is_skill_content {
                 pending_reset = true;
             }
         }
@@ -210,9 +225,11 @@ fn parse_transcript(path: &Path) -> TranscriptState {
         if line_type == "assistant" && is_top_level && pending_reset {
             tool_starts.clear();
             agent_starts.clear();
+            skill_starts.clear();
             state.tools.completed.clear();
             state.tools.running.clear();
             state.agents.clear();
+            state.skills.clear();
             pending_reset = false;
         }
 
@@ -271,6 +288,26 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                                     },
                                 );
                             }
+                        } else if name == "Skill" {
+                            // Handle Skill invocations
+                            // Use skill name as key to deduplicate (only show most recent per skill)
+                            if let Some(input) = input {
+                                let skill_name = input
+                                    .get("skill")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("skill");
+
+                                // Remove any previous entry for this skill name
+                                skill_starts.retain(|_, entry| entry.name != skill_name);
+
+                                skill_starts.insert(
+                                    id.to_string(),
+                                    SkillEntry {
+                                        name: skill_name.to_string(),
+                                        status: Status::Running,
+                                    },
+                                );
+                            }
                         } else {
                             // Regular tool
                             let target = extract_target(name, input);
@@ -299,6 +336,16 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
+                        // Check if it's a skill
+                        if let Some(skill) = skill_starts.get_mut(tool_use_id) {
+                            skill.status = if is_error {
+                                Status::Error
+                            } else {
+                                Status::Completed
+                            };
+                            continue;
+                        }
+
                         // Regular tool - move from running to completed
                         if let Some((name, _)) = tool_starts.remove(tool_use_id) {
                             *state.tools.completed.entry(name).or_insert(0) += 1;
@@ -319,6 +366,9 @@ fn parse_transcript(path: &Path) -> TranscriptState {
     // Convert agents
     state.agents = agent_starts.into_values().collect();
 
+    // Convert skills
+    state.skills = skill_starts.into_values().collect();
+
     // Limit to recent entries
     if state.tools.running.len() > 10 {
         let len = state.tools.running.len();
@@ -327,6 +377,10 @@ fn parse_transcript(path: &Path) -> TranscriptState {
     if state.agents.len() > 5 {
         let len = state.agents.len();
         state.agents = state.agents.split_off(len - 5);
+    }
+    if state.skills.len() > 3 {
+        let len = state.skills.len();
+        state.skills = state.skills.split_off(len - 3);
     }
 
     state
@@ -343,6 +397,10 @@ fn format_output(state: &TranscriptState) -> String {
         parts.push(todo_str);
     }
 
+    if let Some(skill_str) = format_skills(&state.skills) {
+        parts.push(skill_str);
+    }
+
     if let Some(agent_str) = format_agents(&state.agents) {
         parts.push(agent_str);
     }
@@ -356,6 +414,27 @@ fn format_output(state: &TranscriptState) -> String {
     }
 
     parts.join(&format!(" {GRAY}|{NC} "))
+}
+
+fn format_skills(skills: &[SkillEntry]) -> Option<String> {
+    if skills.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<String> = skills
+        .iter()
+        .map(|s| {
+            let (color, icon) = match s.status {
+                Status::Running => (YELLOW, ICON_SPINNER),
+                Status::Completed => (GREEN, ICON_CHECK),
+                Status::Error => (RED, ICON_ERROR),
+            };
+
+            format!("{color}{icon}{NC} {}", s.name)
+        })
+        .collect();
+
+    Some(format!("{LAVENDER}{ICON_SKILLS}{NC} {}", parts.join(" ")))
 }
 
 fn format_todos(todos: &TodoState) -> Option<String> {
