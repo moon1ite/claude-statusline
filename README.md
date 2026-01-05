@@ -2,6 +2,8 @@
 
 A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) that displays tool activity, agent status, and todo progress.
 
+![Statusline Preview](docs/preview.png)
+
 ## Features
 
 - **Context Window**: Visual progress bar showing token usage
