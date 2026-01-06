@@ -58,6 +58,7 @@ struct AgentEntry {
     status: Status,
     start_time: Option<String>,
     end_time: Option<String>,
+    start_turn: u32, // Track which turn the agent was started in
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +176,8 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
     // Track if we've seen a user message (pending new turn)
     let mut pending_reset = false;
+    // Track current turn number for agent aging
+    let mut current_turn: u32 = 0;
 
     for line in reader.lines() {
         let line = match line {
@@ -231,9 +234,13 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
         // Reset activity when assistant starts responding (new turn)
         if line_type == "assistant" && is_top_level && pending_reset {
+            current_turn += 1;
             tool_starts.clear();
-            // Keep running agents, only clear completed/errored ones
-            agent_starts.retain(|_, agent| agent.status == Status::Running);
+            // Keep only agents that are BOTH running AND from the current or previous turn
+            // This ensures agents don't persist indefinitely if their tool_result is missing
+            agent_starts.retain(|_, agent| {
+                agent.status == Status::Running && agent.start_turn >= current_turn.saturating_sub(1)
+            });
             skill_starts.clear();
             state.tools.completed.clear();
             state.tools.running.clear();
@@ -294,6 +301,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                                         status: Status::Running,
                                         start_time: timestamp.clone(),
                                         end_time: None,
+                                        start_turn: current_turn,
                                     },
                                 );
                             }
