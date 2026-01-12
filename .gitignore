@@ -1,2 +1,6 @@
 /target
 .DS_Store
+
+# Test files
+test-showcase.jsonl
+testdir/

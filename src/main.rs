@@ -93,6 +93,27 @@ struct TodoItem {
     active_form: Option<String>,
 }
 
+/// Truncate a file path for display, matching claude-hud's logic.
+/// If path > max_len, show `.../<filename>`.
+fn truncate_path(path: &str, max_len: usize) -> String {
+    // Normalize Windows backslashes to forward slashes
+    let normalized = path.replace('\\', "/");
+
+    if normalized.len() <= max_len {
+        return normalized;
+    }
+
+    // Extract filename
+    let filename = normalized.rsplit('/').next().unwrap_or(&normalized);
+
+    // If filename itself is too long, truncate it
+    if filename.len() >= max_len {
+        return format!("{}...", &filename[..max_len.saturating_sub(3)]);
+    }
+
+    format!(".../{}", filename)
+}
+
 fn extract_target(name: &str, input: Option<&Value>) -> Option<String> {
     let input = input?;
 
@@ -102,7 +123,7 @@ fn extract_target(name: &str, input: Option<&Value>) -> Option<String> {
                 .get("file_path")
                 .or_else(|| input.get("notebook_path"))
                 .and_then(|v| v.as_str())?;
-            Some(basename(path))
+            Some(truncate_path(path, 30))
         }
         "Glob" => input
             .get("pattern")
@@ -127,14 +148,6 @@ fn extract_target(name: &str, input: Option<&Value>) -> Option<String> {
             .map(|s| truncate(s, 25)),
         _ => None,
     }
-}
-
-fn basename(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path)
-        .to_string()
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
@@ -523,10 +536,18 @@ fn format_agents(agents: &[AgentEntry]) -> Option<String> {
 fn format_tools(tools: &ToolState) -> Option<String> {
     let mut parts: Vec<String> = vec![];
 
+    // Check if we have running file operations (these need more space for paths)
+    let has_file_ops = tools.running.iter().any(|t| {
+        matches!(t.name.as_str(), "Read" | "Write" | "Edit" | "NotebookEdit")
+    });
+
+    // Show fewer completed tools if we have file operations running
+    let max_completed = if has_file_ops { 2 } else { 5 };
+
     let mut completed: Vec<_> = tools.completed.iter().collect();
     completed.sort_by(|a, b| b.1.cmp(a.1));
 
-    for (name, count) in completed.iter().take(5) {
+    for (name, count) in completed.iter().take(max_completed) {
         let suffix = if **count > 1 {
             format!(" ×{}", count)
         } else {
@@ -535,7 +556,18 @@ fn format_tools(tools: &ToolState) -> Option<String> {
         parts.push(format!("{GREEN}{ICON_CHECK}{NC} {}{}", name, suffix));
     }
 
-    for tool in tools.running.iter().take(3) {
+    // Show running tools - file ops first (they have paths)
+    let mut running: Vec<_> = tools.running.iter().collect();
+    running.sort_by_key(|t| {
+        // File operations come first (lower sort key)
+        if matches!(t.name.as_str(), "Read" | "Write" | "Edit" | "NotebookEdit") {
+            0
+        } else {
+            1
+        }
+    });
+
+    for tool in running.iter().take(2) {
         let target = tool
             .target
             .as_ref()
@@ -607,7 +639,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let path = Path::new(&args[1]);
+    let path = std::path::Path::new(&args[1]);
     if !path.exists() {
         std::process::exit(0);
     }
@@ -617,5 +649,18 @@ fn main() {
 
     if !output.is_empty() {
         println!("{}", output);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_truncate_path_long() {
+        let path = "testdir/dir1/dir2/dir3/dir4/dir5/longfilenametest.py";
+        let result = truncate_path(path, 30);
+        assert_eq!(result, ".../longfilenametest.py", "Path: {}, Result: {}", path, result);
     }
 }
