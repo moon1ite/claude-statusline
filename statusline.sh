@@ -8,17 +8,8 @@ model_name=$(echo "$input" | jq -r '.model.display_name')
 current_dir=$(echo "$input" | jq -r '.workspace.current_dir')
 transcript_path=$(echo "$input" | jq -r '.transcript_path // empty')
 
-# Extract context window information
-context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-current_usage=$(echo "$input" | jq '.context_window.current_usage')
-
-# Calculate context percentage
-if [ "$current_usage" != "null" ]; then
-  current_tokens=$(echo "$current_usage" | jq '.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens')
-  context_percent=$((current_tokens * 100 / context_size))
-else
-  context_percent=0
-fi
+# Extract context percentage (available since Claude Code 2.1.6)
+context_percent=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d'.' -f1)
 
 # Build context progress bar (20 chars wide)
 bar_width=15
