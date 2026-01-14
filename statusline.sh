@@ -38,42 +38,10 @@ NC='\033[0m' # No Color
 # Change to the current directory to get git info
 cd "$current_dir" 2>/dev/null || cd /
 
-# Get git branch
+# Get git branch (file stats now shown natively in input line)
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   branch=$(git branch --show-current 2>/dev/null || echo "detached")
-
-  # Get git status with file counts
-  status_output=$(git status --porcelain 2>/dev/null)
-
-  if [ -n "$status_output" ]; then
-    # Count files and get basic line stats
-    total_files=$(echo "$status_output" | wc -l | xargs)
-
-    # Get stats from both staged and unstaged changes (ref: https://gist.github.com/frankdilo/e49a680a2c946143868f7f61b45127e1)
-    staged_stats=$(git diff --numstat --cached 2>/dev/null | awk '{added+=$1; removed+=$2} END {print added+0, removed+0}')
-    unstaged_stats=$(git diff --numstat 2>/dev/null | awk '{added+=$1; removed+=$2} END {print added+0, removed+0}')
-
-    staged_added=$(echo $staged_stats | cut -d' ' -f1)
-    staged_removed=$(echo $staged_stats | cut -d' ' -f2)
-    unstaged_added=$(echo $unstaged_stats | cut -d' ' -f1)
-    unstaged_removed=$(echo $unstaged_stats | cut -d' ' -f2)
-
-    # Count lines in untracked files (files starting with ??)
-    untracked_lines=$(echo "$status_output" | grep '^??' | cut -c4- | xargs -I {} sh -c 'test -f "{}" && wc -l < "{}" || echo 0' 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-
-    added=$((staged_added + unstaged_added + untracked_lines))
-    removed=$((staged_removed + unstaged_removed))
-
-    # Build status display
-    git_info=" ${YELLOW}$branch${NC} ${YELLOW}${GRAY}(${NC}${total_files} files${NC}"
-
-    [ "$added" -gt 0 ] && git_info="${git_info} ${GREEN}+${added}${NC}"
-    [ "$removed" -gt 0 ] && git_info="${git_info} ${RED}-${removed}${NC}"
-
-    git_info="${git_info}${YELLOW}${GRAY})${NC}"
-  else
-    git_info=" ${YELLOW}$branch${NC}"
-  fi
+  git_info=" ${YELLOW}${branch}${NC}"
 else
   git_info=""
 fi
