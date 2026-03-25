@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Read JSON input from stdin
-input=$(</dev/stdin)
+input=$(cat)
 
 # Extract all fields from JSON in a single jq call (pipe delimiter avoids empty-field collapse)
 IFS='|' read -r model_name current_dir transcript_path session_id session_cost context_percent \
