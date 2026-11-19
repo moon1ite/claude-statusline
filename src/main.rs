@@ -24,7 +24,6 @@ const ICON_ERROR: &str = "\u{f00d}";
 
 // Nerd Font icons - sections
 const ICON_TODOS: &str = "\u{f14a}"; // checkbox
-const ICON_TOOLS: &str = "\u{f0ad}"; // wrench
 const ICON_SKILLS: &str = "\u{f0e7}"; // lightning bolt (skills)
 
 // ============================================================================
@@ -49,11 +48,6 @@ impl Status {
     }
 }
 
-#[derive(Debug, Default)]
-struct ToolState {
-    completed: HashMap<String, u32>,
-}
-
 #[derive(Debug, Clone)]
 struct SkillEntry {
     name: String,
@@ -75,7 +69,6 @@ struct TaskState {
 
 #[derive(Debug, Default)]
 struct TranscriptState {
-    tools: ToolState,
     skills: Vec<SkillEntry>,
     tasks: TaskState,
 }
@@ -86,7 +79,6 @@ struct TranscriptState {
 
 fn parse_transcript(path: &Path) -> TranscriptState {
     let mut state = TranscriptState::default();
-    let mut tool_starts: HashMap<String, String> = HashMap::new();
     let mut skill_starts: HashMap<String, SkillEntry> = HashMap::new();
 
     // Task ID counter (TaskCreate assigns sequential IDs: "1", "2", ...)
@@ -145,9 +137,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
         // Reset activity when assistant starts responding (new turn)
         if line_type == "assistant" && pending_reset {
-            tool_starts.clear();
             skill_starts.clear();
-            state.tools.completed.clear();
             state.skills.clear();
             state.tasks = TaskState::default();
             next_task_id = 1;
@@ -215,11 +205,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Skip other task management tools from tool display
-                        if name == "TaskOutput" || name == "TaskStop" || name == "TaskGet" || name == "TaskList" {
-                            continue;
-                        }
-
                         if name == "Skill" {
                             // Handle Skill invocations
                             // Use skill name as key to deduplicate (only show most recent per skill)
@@ -241,9 +226,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                                     },
                                 );
                             }
-                        } else {
-                            // Regular tool
-                            tool_starts.insert(id.to_string(), name.to_string());
                         }
                     }
                     "tool_result" => {
@@ -257,19 +239,12 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Check if it's a skill
                         if let Some(skill) = skill_starts.get_mut(tool_use_id) {
                             skill.status = if is_error {
                                 Status::Error
                             } else {
                                 Status::Completed
                             };
-                            continue;
-                        }
-
-                        // Regular tool - move to completed
-                        if let Some(name) = tool_starts.remove(tool_use_id) {
-                            *state.tools.completed.entry(name).or_insert(0) += 1;
                         }
                     }
                     _ => {}
@@ -278,10 +253,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
         }
     }
 
-    // Convert skills
     state.skills = skill_starts.into_values().collect();
-
-    // Keep only the most recent entries
     state.skills.truncate(3);
 
     state
@@ -369,10 +341,6 @@ fn format_output(state: &TranscriptState) -> String {
         parts.push(skill_str);
     }
 
-    if let Some(tool_str) = format_tools(&state.tools) {
-        parts.push(tool_str);
-    }
-
     if parts.is_empty() {
         return String::new();
     }
@@ -440,31 +408,6 @@ fn format_tasks(tasks: &TaskState) -> Option<String> {
 
     Some(text)
 }
-
-fn format_tools(tools: &ToolState) -> Option<String> {
-    if tools.completed.is_empty() {
-        return None;
-    }
-
-    let mut completed: Vec<_> = tools.completed.iter().collect();
-    completed.sort_by(|a, b| b.1.cmp(a.1));
-
-    let parts: Vec<String> = completed
-        .iter()
-        .take(5)
-        .map(|(name, count)| {
-            let suffix = if **count > 1 {
-                format!(" x{}", count)
-            } else {
-                String::new()
-            };
-            format!("{GREEN}{ICON_CHECK}{NC} {}{}", name, suffix)
-        })
-        .collect();
-
-    Some(format!("{LAVENDER}{ICON_TOOLS}{NC} {}", parts.join(" ")))
-}
-
 
 // ============================================================================
 // Main
