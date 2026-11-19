@@ -24,8 +24,6 @@ const ICON_ERROR: &str = "\u{f00d}";
 
 // Nerd Font icons - sections
 const ICON_TODOS: &str = "\u{f14a}"; // checkbox
-const ICON_AGENTS: &str = "\u{ee0d}"; // robot
-const ICON_TOOLS: &str = "\u{f0ad}"; // wrench
 const ICON_SKILLS: &str = "\u{f0e7}"; // lightning bolt (skills)
 
 // ============================================================================
@@ -50,20 +48,6 @@ impl Status {
     }
 }
 
-#[derive(Debug, Default)]
-struct ToolState {
-    completed: HashMap<String, u32>,
-}
-
-#[derive(Debug, Clone)]
-struct AgentEntry {
-    display_name: String,
-    agent_id: Option<String>,
-    status: Status,
-    start_turn: u32,
-    tool_count: u32,
-}
-
 #[derive(Debug, Clone)]
 struct SkillEntry {
     name: String,
@@ -85,23 +69,8 @@ struct TaskState {
 
 #[derive(Debug, Default)]
 struct TranscriptState {
-    tools: ToolState,
-    agents: Vec<AgentEntry>,
     skills: Vec<SkillEntry>,
     tasks: TaskState,
-}
-
-// ============================================================================
-// JSONL Parsing
-// ============================================================================
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let end = s.char_indices().nth(max_len - 1).map(|(i, _)| i).unwrap_or(s.len());
-        format!("{}\u{2026}", &s[..end]) // ellipsis character
-    }
 }
 
 // ============================================================================
@@ -110,12 +79,7 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 
 fn parse_transcript(path: &Path) -> TranscriptState {
     let mut state = TranscriptState::default();
-    let mut tool_starts: HashMap<String, String> = HashMap::new();
-    let mut agent_starts: HashMap<String, AgentEntry> = HashMap::new();
     let mut skill_starts: HashMap<String, SkillEntry> = HashMap::new();
-
-    // Agent progress tracking: agentId -> parent tool_use_id (from progress events)
-    let mut agent_id_map: HashMap<String, String> = HashMap::new();
 
     // Task ID counter (TaskCreate assigns sequential IDs: "1", "2", ...)
     let mut next_task_id: u32 = 1;
@@ -129,8 +93,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
     // Track if we've seen a user message (pending new turn)
     let mut pending_reset = false;
-    // Track current turn number for agent aging
-    let mut current_turn: u32 = 0;
 
     for line in reader.lines() {
         let line = match line {
@@ -175,33 +137,11 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
         // Reset activity when assistant starts responding (new turn)
         if line_type == "assistant" && pending_reset {
-            current_turn += 1;
-            tool_starts.clear();
-            // Keep only agents that are BOTH running AND from the current or previous turn
-            agent_starts.retain(|_, agent| {
-                agent.status == Status::Running && agent.start_turn >= current_turn.saturating_sub(1)
-            });
             skill_starts.clear();
-            state.tools.completed.clear();
-            state.agents.clear();
             state.skills.clear();
             state.tasks = TaskState::default();
             next_task_id = 1;
-            agent_id_map.retain(|_, task_id| agent_starts.contains_key(task_id));
             pending_reset = false;
-        }
-
-        // Process agent_progress events for agentId <-> tool_use_id mapping
-        if line_type == "progress" {
-            if let Some(data) = value.get("data") {
-                if data.get("type").and_then(|v| v.as_str()) == Some("agent_progress") {
-                    if let Some(aid) = data.get("agentId").and_then(|v| v.as_str()) {
-                        if let Some(parent_id) = value.get("parentToolUseID").and_then(|v| v.as_str()) {
-                            agent_id_map.insert(aid.to_string(), parent_id.to_string());
-                        }
-                    }
-                }
-            }
         }
 
         // Process message content
@@ -265,41 +205,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Skip other task management tools from tool display
-                        if name == "TaskOutput" || name == "TaskStop" || name == "TaskGet" || name == "TaskList" {
-                            continue;
-                        }
-
-                        // Handle Agent (subagents)
-                        if name == "Agent" {
-                            if let Some(input) = input {
-                                let subagent_type = input
-                                    .get("subagent_type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("agent");
-
-                                // Use description as display name for generic types
-                                let display_name = input
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|_| subagent_type == "general-purpose")
-                                    .unwrap_or(subagent_type);
-
-                                // Cap display name to avoid blowing out statusline width
-                                let display_name = truncate_str(display_name, 25);
-
-                                agent_starts.insert(
-                                    id.to_string(),
-                                    AgentEntry {
-                                        display_name,
-                                        agent_id: None,
-                                        status: Status::Running,
-                                        start_turn: current_turn,
-                                        tool_count: 0,
-                                    },
-                                );
-                            }
-                        } else if name == "Skill" {
+                        if name == "Skill" {
                             // Handle Skill invocations
                             // Use skill name as key to deduplicate (only show most recent per skill)
                             if let Some(input) = input {
@@ -320,9 +226,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                                     },
                                 );
                             }
-                        } else {
-                            // Regular tool
-                            tool_starts.insert(id.to_string(), name.to_string());
                         }
                     }
                     "tool_result" => {
@@ -336,33 +239,12 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Check if it's an agent
-                        if let Some(agent) = agent_starts.get_mut(tool_use_id) {
-                            agent.status = if is_error {
-                                Status::Error
-                            } else {
-                                Status::Completed
-                            };
-                            // Parse tool_uses count from agent result content
-                            if let Some(uses) = parse_agent_result_usage(block) {
-                                agent.tool_count = uses;
-                            }
-                            continue;
-                        }
-
-                        // Check if it's a skill
                         if let Some(skill) = skill_starts.get_mut(tool_use_id) {
                             skill.status = if is_error {
                                 Status::Error
                             } else {
                                 Status::Completed
                             };
-                            continue;
-                        }
-
-                        // Regular tool - move to completed
-                        if let Some(name) = tool_starts.remove(tool_use_id) {
-                            *state.tools.completed.entry(name).or_insert(0) += 1;
                         }
                     }
                     _ => {}
@@ -371,108 +253,10 @@ fn parse_transcript(path: &Path) -> TranscriptState {
         }
     }
 
-    // Map agentIds from progress events to agent entries
-    for (aid, task_id) in &agent_id_map {
-        if let Some(agent) = agent_starts.get_mut(task_id) {
-            agent.agent_id = Some(aid.clone());
-        }
-    }
-
-    // Convert agents
-    state.agents = agent_starts.into_values().collect();
-
-    // Convert skills
     state.skills = skill_starts.into_values().collect();
-
-    // Keep only the most recent entries
-    if state.agents.len() > 5 {
-        state.agents.sort_by_key(|a| std::cmp::Reverse(a.start_turn));
-        state.agents.truncate(5);
-    }
     state.skills.truncate(3);
 
     state
-}
-
-// ============================================================================
-// Agent Subfile Parsing
-// ============================================================================
-
-/// Parse tool_uses count from a completed agent's tool_result content.
-/// The content contains text like: "<usage>...\ntool_uses: 4\n...</usage>"
-fn parse_agent_result_usage(block: &Value) -> Option<u32> {
-    let content = block.get("content")?;
-    let text = if let Some(s) = content.as_str() {
-        s.to_string()
-    } else if let Some(arr) = content.as_array() {
-        arr.iter()
-            .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        return None;
-    };
-
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with("tool_uses:") {
-            return line.splitn(2, ':').nth(1)?.trim().parse().ok();
-        }
-    }
-    None
-}
-
-/// Read a subagent's JSONL file to get the total tool count.
-fn read_subagent_tool_count(transcript_path: &Path, agent_id: &str) -> u32 {
-    let stem = match transcript_path.file_stem().and_then(|s| s.to_str()) {
-        Some(s) => s,
-        None => return 0,
-    };
-    let parent = transcript_path.parent().unwrap_or(Path::new(""));
-    let subagent_file = parent
-        .join(stem)
-        .join("subagents")
-        .join(format!("agent-{}.jsonl", agent_id));
-
-    let file = match File::open(&subagent_file) {
-        Ok(f) => f,
-        Err(_) => return 0,
-    };
-
-    let reader = BufReader::new(file);
-    let mut tool_count: u32 = 0;
-
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let value: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let content = value
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_array());
-        let content = match content {
-            Some(c) => c,
-            None => continue,
-        };
-
-        for block in content {
-            if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
-                let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if !id.is_empty() && !name.is_empty() {
-                    tool_count += 1;
-                }
-            }
-        }
-    }
-
-    tool_count
 }
 
 // ============================================================================
@@ -557,14 +341,6 @@ fn format_output(state: &TranscriptState) -> String {
         parts.push(skill_str);
     }
 
-    if let Some(agent_str) = format_agents(&state.agents) {
-        parts.push(agent_str);
-    }
-
-    if let Some(tool_str) = format_tools(&state.tools) {
-        parts.push(tool_str);
-    }
-
     if parts.is_empty() {
         return String::new();
     }
@@ -633,58 +409,6 @@ fn format_tasks(tasks: &TaskState) -> Option<String> {
     Some(text)
 }
 
-fn format_agents(agents: &[AgentEntry]) -> Option<String> {
-    if agents.is_empty() {
-        return None;
-    }
-
-    let parts: Vec<String> = agents
-        .iter()
-        .map(|a| {
-            let (color, icon) = match a.status {
-                Status::Running => (YELLOW, ICON_SPINNER),
-                Status::Completed => (GREEN, ICON_CHECK),
-                Status::Error => (RED, ICON_ERROR),
-            };
-
-            let tool_str = if a.tool_count > 0 {
-                format!(" ({}t)", a.tool_count)
-            } else {
-                String::new()
-            };
-
-            format!("{color}{icon}{NC} {}{}", a.display_name, tool_str)
-        })
-        .collect();
-
-    Some(format!("{LAVENDER}{ICON_AGENTS}{NC} {}", parts.join(" ")))
-}
-
-fn format_tools(tools: &ToolState) -> Option<String> {
-    if tools.completed.is_empty() {
-        return None;
-    }
-
-    let mut completed: Vec<_> = tools.completed.iter().collect();
-    completed.sort_by(|a, b| b.1.cmp(a.1));
-
-    let parts: Vec<String> = completed
-        .iter()
-        .take(5)
-        .map(|(name, count)| {
-            let suffix = if **count > 1 {
-                format!(" x{}", count)
-            } else {
-                String::new()
-            };
-            format!("{GREEN}{ICON_CHECK}{NC} {}{}", name, suffix)
-        })
-        .collect();
-
-    Some(format!("{LAVENDER}{ICON_TOOLS}{NC} {}", parts.join(" ")))
-}
-
-
 // ============================================================================
 // Main
 // ============================================================================
@@ -706,18 +430,6 @@ fn main() {
     let session_id = args.get(2).map(|s| s.as_str()).unwrap_or("");
 
     let mut state = parse_transcript(path);
-
-    // Enrich running agents with tool count from subagent files
-    for agent in &mut state.agents {
-        if agent.status == Status::Running {
-            if let Some(aid) = &agent.agent_id {
-                let file_count = read_subagent_tool_count(path, aid);
-                if file_count > 0 {
-                    agent.tool_count = file_count;
-                }
-            }
-        }
-    }
 
     // Merge session-env skill status (skills can report their own progress)
     if !session_id.is_empty() {
