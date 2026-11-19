@@ -192,7 +192,7 @@ context_info="${GRAY}${bar}${NC} ${context_percent}%"
 # Line 1: Context, cost, usage limit, git, dir, model
 line1="${context_info}${cost_info}${reset_info}${git_info:+ ${GRAY}|${NC}}${git_info} ${GRAY}|${NC} ${BLUE}${dir_name}${NC} ${GRAY}|${NC} ${CYAN}${model_name}${NC}"
 
-# Line 2: Tool/agent/todo status from Rust binary
+# Line 2: Todo/skill status from Rust binary
 line2=""
 if [ -n "$transcript_path" ]; then
     line2=$(~/.claude/bin/claude-status "$transcript_path" "$session_id" 2>/dev/null)
