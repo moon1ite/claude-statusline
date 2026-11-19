@@ -1,6 +1,8 @@
 # Claude Code Statusline
 
-A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) that displays tool activity, agent status, and todo progress.
+A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) that displays context, cost, usage limits, the active skill, and todo progress.
+
+Agent and tool activity are not shown, because Claude Code now displays them natively (the subagent panel under the prompt and live tool lines).
 
 ![Statusline Preview](docs/preview.png)
 
@@ -9,8 +11,6 @@ A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) t
 - **Context Window**: Visual progress bar showing token usage
 - **Session Cost**: Running cost of the current session
 - **Git Status**: Current branch with file counts and line changes
-- **Tool Activity**: Real-time display of running and completed tools
-- **Agent Status**: Track spawned agents (Explore, code-reviewer, etc.) with elapsed time
 - **Skill Tracking**: Show which skill Claude is currently using (brainstorming, TDD, etc.)
 - **Todo Progress**: Current task and completion status (done/total)
 
@@ -18,11 +18,11 @@ A real-time statusline plugin for [Claude Code](https://claude.ai/claude-code) t
 
 ```
 ██████░░░░░░░░░ 42% ($0.0234) | main (3 files +45 -12) | my-project | Claude Opus 4
- ⟳ Fix auth bug (2/5) |  ✓ brainstorming |  ✓ Explore (3s) |  ✓ Glob ✓ Read ⟳ Edit
+ ⟳ Fix auth bug (2/5) |  ✓ brainstorming
 ```
 
 **Line 1** (Bash): Context bar, cost, git status, directory, model
-**Line 2** (Rust): Todos, skills, agents, tools
+**Line 2** (Rust): Todos, skills (hidden when both are empty)
 
 ## Requirements
 
@@ -101,8 +101,6 @@ This plugin uses [Nerd Font](https://www.nerdfonts.com/) icons. Make sure your t
 
 - `` - Checkbox (todos)
 - `` - Lightning bolt (skills)
-- `` - Robot (agents)
-- `` - Wrench (tools)
 - `` - Spinner (running)
 - `` - Check (complete)
 - `` - X (error)
@@ -137,9 +135,8 @@ claude-statusline/         # (your cloned repo)
 
 3. **claude-status** (Rust):
    - Parses the JSONL transcript file
-   - Tracks tool_use/tool_result pairs
-   - Tracks Task (agent) invocations
-   - Tracks TodoWrite updates
+   - Tracks Skill invocations
+   - Tracks TaskCreate/TaskUpdate calls
    - Outputs formatted Line 2
 
 ### Transcript Parsing
@@ -148,17 +145,14 @@ The Rust binary implements event sourcing over the Claude Code transcript:
 
 | Event | Action |
 |-------|--------|
-| `tool_use` | Add to running tools map |
-| `tool_result` | Move to completed, increment count |
-| `Task` tool_use | Create agent entry |
-| `Task` tool_result | Mark agent complete |
 | `Skill` tool_use | Create/update skill entry (deduplicated by name) |
 | `Skill` tool_result | Mark skill complete |
-| `TodoWrite` | Update todo state |
+| `TaskCreate` | Add todo (sequential ID) |
+| `TaskUpdate` | Update todo status |
 | `user` message (top-level) | Mark pending reset |
-| `assistant` message (top-level) | Reset tools/agents for new turn |
+| `assistant` message (top-level) | Reset skills/todos for new turn |
 
-**Per-turn tracking**: Tools, agents, and skills reset when you send a new message and Claude starts responding, so you only see the current turn's activity.
+**Per-turn tracking**: Skills and todos reset when you send a new message and Claude starts responding, so you only see the current turn's activity.
 
 ## Troubleshooting
 
@@ -172,9 +166,9 @@ The Rust binary implements event sourcing over the Claude Code transcript:
 3. Check statusline.sh path in settings.json points to your repo
 4. Test manually: `echo '{}' | /path/to/your/repo/statusline.sh`
 
-### Tools/agents disappearing
+### Skills/todos disappearing
 - This is expected! Activity resets at the start of each turn
-- Tools persist until you send a new message and Claude responds
+- They persist until you send a new message and Claude responds
 
 ### Build errors
 - Ensure Rust is installed: `cargo --version`
