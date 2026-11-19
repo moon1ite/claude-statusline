@@ -24,7 +24,6 @@ const ICON_ERROR: &str = "\u{f00d}";
 
 // Nerd Font icons - sections
 const ICON_TODOS: &str = "\u{f14a}"; // checkbox
-const ICON_AGENTS: &str = "\u{ee0d}"; // robot
 const ICON_TOOLS: &str = "\u{f0ad}"; // wrench
 const ICON_SKILLS: &str = "\u{f0e7}"; // lightning bolt (skills)
 
@@ -56,13 +55,6 @@ struct ToolState {
 }
 
 #[derive(Debug, Clone)]
-struct AgentEntry {
-    display_name: String,
-    status: Status,
-    start_turn: u32,
-}
-
-#[derive(Debug, Clone)]
 struct SkillEntry {
     name: String,
     status: Status,
@@ -84,22 +76,8 @@ struct TaskState {
 #[derive(Debug, Default)]
 struct TranscriptState {
     tools: ToolState,
-    agents: Vec<AgentEntry>,
     skills: Vec<SkillEntry>,
     tasks: TaskState,
-}
-
-// ============================================================================
-// JSONL Parsing
-// ============================================================================
-
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let end = s.char_indices().nth(max_len - 1).map(|(i, _)| i).unwrap_or(s.len());
-        format!("{}\u{2026}", &s[..end]) // ellipsis character
-    }
 }
 
 // ============================================================================
@@ -109,7 +87,6 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 fn parse_transcript(path: &Path) -> TranscriptState {
     let mut state = TranscriptState::default();
     let mut tool_starts: HashMap<String, String> = HashMap::new();
-    let mut agent_starts: HashMap<String, AgentEntry> = HashMap::new();
     let mut skill_starts: HashMap<String, SkillEntry> = HashMap::new();
 
     // Task ID counter (TaskCreate assigns sequential IDs: "1", "2", ...)
@@ -124,8 +101,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
     // Track if we've seen a user message (pending new turn)
     let mut pending_reset = false;
-    // Track current turn number for agent aging
-    let mut current_turn: u32 = 0;
 
     for line in reader.lines() {
         let line = match line {
@@ -170,15 +145,9 @@ fn parse_transcript(path: &Path) -> TranscriptState {
 
         // Reset activity when assistant starts responding (new turn)
         if line_type == "assistant" && pending_reset {
-            current_turn += 1;
             tool_starts.clear();
-            // Keep only agents that are BOTH running AND from the current or previous turn
-            agent_starts.retain(|_, agent| {
-                agent.status == Status::Running && agent.start_turn >= current_turn.saturating_sub(1)
-            });
             skill_starts.clear();
             state.tools.completed.clear();
-            state.agents.clear();
             state.skills.clear();
             state.tasks = TaskState::default();
             next_task_id = 1;
@@ -251,34 +220,7 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Handle Agent (subagents)
-                        if name == "Agent" {
-                            if let Some(input) = input {
-                                let subagent_type = input
-                                    .get("subagent_type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("agent");
-
-                                // Use description as display name for generic types
-                                let display_name = input
-                                    .get("description")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|_| subagent_type == "general-purpose")
-                                    .unwrap_or(subagent_type);
-
-                                // Cap display name to avoid blowing out statusline width
-                                let display_name = truncate_str(display_name, 25);
-
-                                agent_starts.insert(
-                                    id.to_string(),
-                                    AgentEntry {
-                                        display_name,
-                                        status: Status::Running,
-                                        start_turn: current_turn,
-                                    },
-                                );
-                            }
-                        } else if name == "Skill" {
+                        if name == "Skill" {
                             // Handle Skill invocations
                             // Use skill name as key to deduplicate (only show most recent per skill)
                             if let Some(input) = input {
@@ -315,16 +257,6 @@ fn parse_transcript(path: &Path) -> TranscriptState {
                             continue;
                         }
 
-                        // Check if it's an agent
-                        if let Some(agent) = agent_starts.get_mut(tool_use_id) {
-                            agent.status = if is_error {
-                                Status::Error
-                            } else {
-                                Status::Completed
-                            };
-                            continue;
-                        }
-
                         // Check if it's a skill
                         if let Some(skill) = skill_starts.get_mut(tool_use_id) {
                             skill.status = if is_error {
@@ -346,17 +278,10 @@ fn parse_transcript(path: &Path) -> TranscriptState {
         }
     }
 
-    // Convert agents
-    state.agents = agent_starts.into_values().collect();
-
     // Convert skills
     state.skills = skill_starts.into_values().collect();
 
     // Keep only the most recent entries
-    if state.agents.len() > 5 {
-        state.agents.sort_by_key(|a| std::cmp::Reverse(a.start_turn));
-        state.agents.truncate(5);
-    }
     state.skills.truncate(3);
 
     state
@@ -444,10 +369,6 @@ fn format_output(state: &TranscriptState) -> String {
         parts.push(skill_str);
     }
 
-    if let Some(agent_str) = format_agents(&state.agents) {
-        parts.push(agent_str);
-    }
-
     if let Some(tool_str) = format_tools(&state.tools) {
         parts.push(tool_str);
     }
@@ -518,27 +439,6 @@ fn format_tasks(tasks: &TaskState) -> Option<String> {
     };
 
     Some(text)
-}
-
-fn format_agents(agents: &[AgentEntry]) -> Option<String> {
-    if agents.is_empty() {
-        return None;
-    }
-
-    let parts: Vec<String> = agents
-        .iter()
-        .map(|a| {
-            let (color, icon) = match a.status {
-                Status::Running => (YELLOW, ICON_SPINNER),
-                Status::Completed => (GREEN, ICON_CHECK),
-                Status::Error => (RED, ICON_ERROR),
-            };
-
-            format!("{color}{icon}{NC} {}", a.display_name)
-        })
-        .collect();
-
-    Some(format!("{LAVENDER}{ICON_AGENTS}{NC} {}", parts.join(" ")))
 }
 
 fn format_tools(tools: &ToolState) -> Option<String> {
